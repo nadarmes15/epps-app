@@ -602,7 +602,7 @@ def estado_badge(value):
 def inject_now():
     return {"current_year": datetime.now().year}
 
-
+init_db()
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 5000))
