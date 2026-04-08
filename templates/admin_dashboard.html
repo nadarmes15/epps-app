@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Panel administrador - EPPs{% endblock %}
+{% block content %}
+<section class="admin-grid">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <span class="eyebrow">Panel administrador</span>
+        <h2>Cargar archivo Excel</h2>
+      </div>
+      <div class="actions-row">
+        <a class="link-btn secondary" href="{{ url_for('admin_exportar') }}">Exportar Excel</a>
+        <a class="link-btn" href="{{ url_for('admin_logout') }}">Cerrar sesión</a>
+      </div>
+    </div>
+    <p>Formato esperado: <strong>NRO. DNI, NOMBRE AUXILIAR, DESCRIPCION, CANTIDAD, FECHA DE MOVIMIENTO, FECHA DE RENOVACION y ESTADO</strong>.</p>
+    <form method="post" enctype="multipart/form-data" class="upload-form">
+      <input type="file" name="excel_file" accept=".xlsx,.xlsm,.xls" required>
+      <button type="submit">Subir archivo</button>
+    </form>
+  </div>
+
+  <div class="stats-grid stats-grid-6">
+    <div class="stat-card"><span>Total de registros</span><strong>{{ stats["total_registros"] }}</strong></div>
+    <div class="stat-card"><span>Trabajadores únicos</span><strong>{{ stats["total_trabajadores"] }}</strong></div>
+    <div class="stat-card"><span>Vigentes</span><strong>{{ stats["vigentes"] }}</strong></div>
+    <div class="stat-card"><span>Por vencer</span><strong>{{ stats["por_vencer"] }}</strong></div>
+    <div class="stat-card"><span>Vencidos</span><strong>{{ stats["vencidos"] }}</strong></div>
+    <div class="stat-card"><span>Última importación</span><strong>{{ stats["ultima_importacion"] }}</strong></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head compact">
+      <div>
+        <h3>Filtro rápido</h3>
+        <p class="muted">Busca por DNI o por estado visual.</p>
+      </div>
+    </div>
+    <form method="get" class="filters-form">
+      <input type="text" name="dni" maxlength="8" placeholder="DNI" value="{{ filtro_dni }}">
+      <select name="estado">
+        <option value="">Todos los estados</option>
+        <option value="VIGENTE" {% if filtro_estado == 'VIGENTE' %}selected{% endif %}>Vigente</option>
+        <option value="ENTREGADO" {% if filtro_estado == 'ENTREGADO' %}selected{% endif %}>Entregado</option>
+        <option value="POR VENCER" {% if filtro_estado == 'POR VENCER' %}selected{% endif %}>Por vencer</option>
+        <option value="VENCIDO" {% if filtro_estado == 'VENCIDO' %}selected{% endif %}>Vencido</option>
+      </select>
+      <button type="submit">Filtrar</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3>Archivo activo</h3>
+    <p><strong>{{ stats["archivo_origen"] }}</strong></p>
+  </div>
+
+  <div class="panel">
+    <h3>Cambiar contraseña</h3>
+    <form method="post" action="{{ url_for('change_password') }}" class="password-form">
+      <input type="password" name="current_password" placeholder="Contraseña actual" required>
+      <input type="password" name="new_password" placeholder="Nueva contraseña" required>
+      <input type="password" name="confirm_password" placeholder="Confirmar nueva contraseña" required>
+      <button type="submit">Actualizar contraseña</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3>Registros cargados</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>DNI</th><th>Nombre</th><th>Descripción</th><th>Renovación</th><th>Estado</th><th>Archivo</th></tr>
+        </thead>
+        <tbody>
+          {% for item in recent_records %}
+          <tr>
+            <td class="center">{{ item["dni"] }}</td>
+            <td>{{ item["nombre_auxiliar"] }}</td>
+            <td>{{ item["descripcion"] }}</td>
+            <td class="center">{{ item["fecha_renovacion"] }}</td>
+            <td class="center"><span class="badge {{ item['estado_visual']|estado_badge }}">{{ item["estado_visual"] }}</span></td>
+            <td>{{ item["archivo_origen"] }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="center">No hay registros para mostrar.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

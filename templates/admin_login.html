@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Administrador - EPPs{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <span class="eyebrow">Acceso privado</span>
+  <h2>Administrador</h2>
+  <p>Solo el administrador autorizado puede cargar archivos, actualizar registros y exportar la información actual.</p>
+  <form method="post" class="auth-form">
+    <label>Usuario</label>
+    <input type="text" name="username" placeholder="Usuario" required>
+    <label>Contraseña</label>
+    <input type="password" name="password" placeholder="Contraseña" required>
+    <button type="submit">Ingresar</button>
+  </form>
+</section>
+{% endblock %}

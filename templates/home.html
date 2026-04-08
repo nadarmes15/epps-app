@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Consulta de trabajador - EPPs{% endblock %}
+{% block content %}
+<section class="hero-card">
+  <div>
+    <span class="eyebrow">Portal del trabajador</span>
+    <h2>Consulta tu renovación de EPPs con tu DNI</h2>
+    <p>Ingresa tu número de DNI para ver tus equipos registrados, fechas de movimiento, fechas de renovación y el estado actual de cada EPP.</p>
+    <ul class="hero-list">
+      <li>Consulta simple y rápida</li>
+      <li>Visualización por trabajador</li>
+      <li>Estados destacados automáticamente</li>
+    </ul>
+  </div>
+  <form method="post" class="search-form">
+    <label for="dni">Número de DNI</label>
+    <input id="dni" name="dni" type="text" maxlength="8" placeholder="Ejemplo: 70545052" value="{{ dni }}" required>
+    <button type="submit">Consultar</button>
+  </form>
+</section>
+
+{% if records %}
+<section class="summary-grid">
+  <div class="mini-card"><span>Total de ítems</span><strong>{{ resumen.total_items }}</strong></div>
+  <div class="mini-card"><span>Vigentes</span><strong>{{ resumen.vigentes }}</strong></div>
+  <div class="mini-card"><span>Por vencer</span><strong>{{ resumen.por_vencer }}</strong></div>
+  <div class="mini-card"><span>Vencidos</span><strong>{{ resumen.vencidos }}</strong></div>
+</section>
+
+<section class="results-card">
+  <div class="section-head">
+    <div>
+      <h3>Resultado encontrado</h3>
+      <p><strong>DNI:</strong> {{ dni }} | <strong>Trabajador:</strong> {{ nombre }}</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Descripción</th>
+          <th>Cantidad</th>
+          <th>Fecha de movimiento</th>
+          <th>Fecha de renovación</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in records %}
+        <tr>
+          <td>{{ item["descripcion"] }}</td>
+          <td class="center">{{ item["cantidad"] }}</td>
+          <td class="center">{{ item["fecha_movimiento"] }}</td>
+          <td class="center">{{ item["fecha_renovacion"] }}</td>
+          <td class="center"><span class="badge {{ item['estado_visual']|estado_badge }}">{{ item["estado_visual"] }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
