@@ -1,10 +1,10 @@
 import os
+import re
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from functools import wraps
 from io import BytesIO
 
-import pandas as pd
 from flask import (
     Flask,
     flash,
@@ -16,8 +16,10 @@ from flask import (
     session,
     url_for,
 )
+from openpyxl import Workbook, load_workbook
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+import xlrd
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
@@ -142,107 +144,198 @@ def login_required(view):
     return wrapped_view
 
 
+def clean_text(value) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() == "none" else text
 
 
-def parse_date_value(value):
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return pd.NaT
-    text_value = str(value).strip()
-    if not text_value or text_value.lower() == "nan":
-        return pd.NaT
-    parsed = pd.to_datetime(text_value, errors="coerce")
-    if pd.isna(parsed):
-        parsed = pd.to_datetime(text_value, dayfirst=True, errors="coerce")
-    return parsed
+def parse_date_value(value, datemode=None):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, (int, float)):
+        # Excel serial date support
+        if datemode is not None:
+            try:
+                parts = xlrd.xldate_as_tuple(float(value), datemode)
+                return datetime(*parts[:6])
+            except Exception:
+                pass
+        try:
+            base = datetime(1899, 12, 30)
+            return base + timedelta(days=float(value))
+        except Exception:
+            return None
+
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return None
+
+    for fmt in (
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%m/%d/%Y",
+        "%d.%m.%Y",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", ""))
+    except Exception:
+        return None
 
 
-def to_display_date(value):
-    parsed = parse_date_value(value)
-    if pd.isna(parsed):
-        return "" if value is None else str(value).strip()
+def to_display_date(value, datemode=None):
+    parsed = parse_date_value(value, datemode)
+    if parsed is None:
+        return clean_text(value)
     return parsed.strftime("%d/%m/%Y")
 
 
-def to_sort_date(value):
-    parsed = parse_date_value(value)
-    if pd.isna(parsed):
+def to_sort_date(value, datemode=None):
+    parsed = parse_date_value(value, datemode)
+    if parsed is None:
         return ""
     return parsed.strftime("%Y-%m-%d")
 
 
-def detect_header_row(file_path: str, sheet_name: str) -> int:
-    preview = pd.read_excel(file_path, sheet_name=sheet_name, header=None, nrows=12, dtype=str)
+def _load_excel_rows(file_path: str):
+    ext = file_path.rsplit(".", 1)[1].lower()
+    if ext in {"xlsx", "xlsm"}:
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        rows = [list(row) for row in ws.iter_rows(values_only=True)]
+        return rows, None
+    if ext == "xls":
+        book = xlrd.open_workbook(file_path)
+        sheet = book.sheet_by_index(0)
+        rows = [sheet.row_values(i) for i in range(sheet.nrows)]
+        return rows, book.datemode
+    raise ValueError("Formato no soportado.")
+
+
+def detect_header_row_from_rows(rows):
     required_norm = {normalize_col(col) for col in REQUIRED_COLUMNS}
-    for idx, row in preview.iterrows():
-        row_values = {normalize_col(v) for v in row.tolist() if str(v).strip() and str(v) != "nan"}
+    for idx, row in enumerate(rows[:12]):
+        row_values = {normalize_col(v) for v in row if clean_text(v)}
         if required_norm.issubset(row_values):
             return idx
     return 0
 
 
-def read_excel_file(file_path: str) -> pd.DataFrame:
-    xls = pd.ExcelFile(file_path)
-    if not xls.sheet_names:
-        raise ValueError("El archivo no contiene hojas.")
+def read_excel_file(file_path: str):
+    rows, datemode = _load_excel_rows(file_path)
+    if not rows:
+        raise ValueError("El archivo no contiene hojas o filas.")
 
-    sheet_name = xls.sheet_names[0]
-    header_row = detect_header_row(file_path, sheet_name)
-    df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row, dtype=str)
-    df.columns = [normalize_col(c) for c in df.columns]
-    df = df.loc[:, ~pd.Index(df.columns).duplicated()].copy()
-    df = df.dropna(how="all")
+    header_row = detect_header_row_from_rows(rows)
+    headers = [normalize_col(v) for v in rows[header_row]]
+    if not any(headers):
+        raise ValueError("No se pudo detectar la fila de encabezados.")
+
+    # Deduplicate headers while preserving first occurrence
+    seen = set()
+    normalized_headers = []
+    for h in headers:
+        if h and h not in seen:
+            normalized_headers.append(h)
+            seen.add(h)
+        else:
+            normalized_headers.append("")
 
     required_norm = [normalize_col(c) for c in REQUIRED_COLUMNS]
-    missing = [col for col in required_norm if col not in df.columns]
+    missing = [col for col in required_norm if col not in normalized_headers]
     if missing:
         raise ValueError("Faltan columnas obligatorias: " + ", ".join(missing))
 
-    keep_cols = list(dict.fromkeys(required_norm + [normalize_col(c) for c in OPTIONAL_COLUMNS if normalize_col(c) in df.columns]))
-    df = df[keep_cols].copy().dropna(how="all")
+    keep_cols = list(dict.fromkeys(required_norm + [normalize_col(c) for c in OPTIONAL_COLUMNS if normalize_col(c) in normalized_headers]))
 
-    for col in df.columns:
-        df[col] = df[col].fillna("").astype(str).str.strip()
+    data_rows = []
+    for raw_row in rows[header_row + 1:]:
+        row_dict = {}
+        for idx, header in enumerate(normalized_headers):
+            if not header or header not in keep_cols:
+                continue
+            value = raw_row[idx] if idx < len(raw_row) else ""
+            row_dict[header] = value
 
-    df = df[df["NRO. DNI"].str.replace(r"\D", "", regex=True) != ""]
-    if df.empty:
+        if not any(clean_text(v) for v in row_dict.values()):
+            continue
+
+        dni_raw = clean_text(row_dict.get("NRO. DNI", ""))
+        dni = re.sub(r"\D", "", dni_raw)[:8]
+        if not dni:
+            continue
+
+        ren_sort = to_sort_date(row_dict.get("FECHA DE RENOVACION"), datemode)
+        mov_sort = to_sort_date(row_dict.get("FECHA DE MOVIMIENTO"), datemode)
+        ren_display = to_display_date(row_dict.get("FECHA DE RENOVACION"), datemode)
+        mov_display = to_display_date(row_dict.get("FECHA DE MOVIMIENTO"), datemode)
+
+        estado = clean_text(row_dict.get("ESTADO", ""))
+        estado_manual = clean_text(row_dict.get("ESTADO MANUAL", ""))
+        estado_visual = estado if estado else "SIN ESTADO"
+
+        ren_dt = parse_date_value(row_dict.get("FECHA DE RENOVACION"), datemode)
+        if ren_dt is not None:
+            delta_days = (ren_dt.date() - date.today()).days
+            if delta_days < 0:
+                estado_visual = "VENCIDO"
+            elif delta_days <= 30:
+                estado_visual = "POR VENCER"
+            elif estado_visual.upper() in {"", "SIN ESTADO"}:
+                estado_visual = "VIGENTE"
+
+        if estado_manual:
+            estado_visual = estado_manual
+
+        operacion = clean_text(
+            row_dict.get("OPERACIÓN") or row_dict.get("OPERACION") or row_dict.get("OPERACIÓN ") or ""
+        )
+
+        data_rows.append(
+            {
+                "NRO. DNI": dni,
+                "NOMBRE AUXILIAR": clean_text(row_dict.get("NOMBRE AUXILIAR", "")),
+                "DESCRIPCION": clean_text(row_dict.get("DESCRIPCION", "")),
+                "CANTIDAD": clean_text(row_dict.get("CANTIDAD", "")),
+                "FECHA DE MOVIMIENTO_DISPLAY": mov_display,
+                "FECHA DE RENOVACION_DISPLAY": ren_display,
+                "ESTADO": estado,
+                "ESTADO MANUAL": estado_manual,
+                "TIPO PLLA": clean_text(row_dict.get("TIPO PLLA", "")),
+                "AREA": clean_text(row_dict.get("AREA", "")),
+                "CARGO": clean_text(row_dict.get("CARGO", "")),
+                "OPERACIÓN": operacion,
+                "FECHA DE MOVIMIENTO_SORT": mov_sort,
+                "FECHA DE RENOVACION_SORT": ren_sort,
+                "ESTADO_VISUAL": estado_visual,
+            }
+        )
+
+    if not data_rows:
         raise ValueError("No se encontraron registros válidos con DNI.")
 
-    df["NRO. DNI"] = df["NRO. DNI"].str.replace(r"\D", "", regex=True).str[:8]
-
-    mov_dt = pd.to_datetime(df["FECHA DE MOVIMIENTO"], errors="coerce")
-    ren_dt = pd.to_datetime(df["FECHA DE RENOVACION"], errors="coerce")
-    invalid_mov = mov_dt.isna()
-    invalid_ren = ren_dt.isna()
-    if invalid_mov.any():
-        mov_dt.loc[invalid_mov] = pd.to_datetime(df.loc[invalid_mov, "FECHA DE MOVIMIENTO"], dayfirst=True, errors="coerce")
-    if invalid_ren.any():
-        ren_dt.loc[invalid_ren] = pd.to_datetime(df.loc[invalid_ren, "FECHA DE RENOVACION"], dayfirst=True, errors="coerce")
-
-    df["FECHA DE MOVIMIENTO_DISPLAY"] = mov_dt.dt.strftime("%d/%m/%Y").fillna(df["FECHA DE MOVIMIENTO"])
-    df["FECHA DE RENOVACION_DISPLAY"] = ren_dt.dt.strftime("%d/%m/%Y").fillna(df["FECHA DE RENOVACION"])
-    df["FECHA DE MOVIMIENTO_SORT"] = mov_dt.dt.strftime("%Y-%m-%d").fillna("")
-    df["FECHA DE RENOVACION_SORT"] = ren_dt.dt.strftime("%Y-%m-%d").fillna("")
-
-    estado_manual = df["ESTADO MANUAL"].fillna("").astype(str).str.strip() if "ESTADO MANUAL" in df.columns else pd.Series("", index=df.index)
-    estado = df["ESTADO"].fillna("").astype(str).str.strip()
-    estado_visual = estado.copy()
-    today = pd.Timestamp(date.today())
-    delta_days = (ren_dt.dt.normalize() - today).dt.days
-    estado_visual = estado_visual.mask(delta_days < 0, "VENCIDO")
-    estado_visual = estado_visual.mask((delta_days >= 0) & (delta_days <= 30), "POR VENCER")
-    estado_visual = estado_visual.mask(estado_visual.eq(""), "SIN ESTADO")
-    estado_visual = estado_visual.mask(estado_manual.ne(""), estado_manual)
-    df["ESTADO_VISUAL"] = estado_visual
-    return df
+    return data_rows
 
 
-def replace_records_from_dataframe(df: pd.DataFrame, original_filename: str):
+def replace_records_from_rows(rows, original_filename: str):
     db = get_db()
     now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     db.execute("DELETE FROM epp_records")
 
-    for _, row in df.iterrows():
-        operacion = row.get("OPERACIÓN", "") or row.get("OPERACION", "") or row.get("OPERACIÓN ", "") or ""
+    for row in rows:
         db.execute(
             """
             INSERT INTO epp_records (
@@ -253,23 +346,23 @@ def replace_records_from_dataframe(df: pd.DataFrame, original_filename: str):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(row.get("NRO. DNI", "")).strip(),
-                str(row.get("NOMBRE AUXILIAR", "")).strip(),
-                str(row.get("DESCRIPCION", "")).strip(),
-                str(row.get("CANTIDAD", "")).strip(),
-                str(row.get("FECHA DE MOVIMIENTO_DISPLAY", "")).strip(),
-                str(row.get("FECHA DE RENOVACION_DISPLAY", "")).strip(),
-                str(row.get("ESTADO", "")).strip(),
-                str(row.get("ESTADO MANUAL", "")).strip(),
-                str(row.get("TIPO PLLA", "")).strip(),
-                str(row.get("AREA", "")).strip(),
-                str(row.get("CARGO", "")).strip(),
-                str(operacion).strip(),
+                row.get("NRO. DNI", ""),
+                row.get("NOMBRE AUXILIAR", ""),
+                row.get("DESCRIPCION", ""),
+                row.get("CANTIDAD", ""),
+                row.get("FECHA DE MOVIMIENTO_DISPLAY", ""),
+                row.get("FECHA DE RENOVACION_DISPLAY", ""),
+                row.get("ESTADO", ""),
+                row.get("ESTADO MANUAL", ""),
+                row.get("TIPO PLLA", ""),
+                row.get("AREA", ""),
+                row.get("CARGO", ""),
+                row.get("OPERACIÓN", ""),
                 original_filename,
                 now,
-                str(row.get("FECHA DE RENOVACION_SORT", "")).strip(),
-                str(row.get("FECHA DE MOVIMIENTO_SORT", "")).strip(),
-                str(row.get("ESTADO_VISUAL", "")).strip(),
+                row.get("FECHA DE RENOVACION_SORT", ""),
+                row.get("FECHA DE MOVIMIENTO_SORT", ""),
+                row.get("ESTADO_VISUAL", ""),
             ),
         )
     db.commit()
@@ -387,9 +480,9 @@ def admin_dashboard():
         excel.save(save_path)
 
         try:
-            df = read_excel_file(save_path)
-            replace_records_from_dataframe(df, final_name)
-            flash(f"Archivo cargado correctamente. Registros importados: {len(df)}", "success")
+            rows = read_excel_file(save_path)
+            replace_records_from_rows(rows, final_name)
+            flash(f"Archivo cargado correctamente. Registros importados: {len(rows)}", "success")
         except Exception as exc:
             flash(f"No se pudo importar el archivo: {exc}", "error")
         return redirect(url_for("admin_dashboard"))
@@ -452,26 +545,45 @@ def change_password():
 @login_required
 def admin_exportar():
     db = get_db()
-    df = pd.read_sql_query(
+    records = db.execute(
         """
-        SELECT dni AS 'NRO. DNI', nombre_auxiliar AS 'NOMBRE AUXILIAR', descripcion AS 'DESCRIPCION',
-               cantidad AS 'CANTIDAD', fecha_movimiento AS 'FECHA DE MOVIMIENTO',
-               fecha_renovacion AS 'FECHA DE RENOVACION', estado AS 'ESTADO',
-               estado_manual AS 'ESTADO MANUAL', tipo_plla AS 'TIPO PLLA', area AS 'AREA',
-               cargo AS 'CARGO', operacion AS 'OPERACIÓN', estado_visual AS 'ESTADO VISUAL',
-               archivo_origen AS 'ARCHIVO ORIGEN', fecha_importacion AS 'FECHA IMPORTACION'
+        SELECT dni, nombre_auxiliar, descripcion, cantidad, fecha_movimiento,
+               fecha_renovacion, estado, estado_manual, tipo_plla, area,
+               cargo, operacion, estado_visual, archivo_origen, fecha_importacion,
+               renovacion_sort, descripcion
         FROM epp_records
         ORDER BY dni, renovacion_sort, descripcion
-        """,
-        db,
-    )
+        """
+    ).fetchall()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "EPPS"
+    headers = [
+        "NRO. DNI", "NOMBRE AUXILIAR", "DESCRIPCION", "CANTIDAD",
+        "FECHA DE MOVIMIENTO", "FECHA DE RENOVACION", "ESTADO", "ESTADO MANUAL",
+        "TIPO PLLA", "AREA", "CARGO", "OPERACIÓN", "ESTADO VISUAL",
+        "ARCHIVO ORIGEN", "FECHA IMPORTACION",
+    ]
+    ws.append(headers)
+    for r in records:
+        ws.append([
+            r["dni"], r["nombre_auxiliar"], r["descripcion"], r["cantidad"],
+            r["fecha_movimiento"], r["fecha_renovacion"], r["estado"], r["estado_manual"],
+            r["tipo_plla"], r["area"], r["cargo"], r["operacion"], r["estado_visual"],
+            r["archivo_origen"], r["fecha_importacion"],
+        ])
 
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="EPPS")
+    wb.save(output)
     output.seek(0)
     filename = f"reporte_epps_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    return send_file(output, as_attachment=True, download_name=filename, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.template_filter("estado_badge")
@@ -493,4 +605,5 @@ def inject_now():
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -1,47 +1,27 @@
-# Sistema web de consulta de renovación de EPPs - Transportes Libertad
+# Sistema web de consulta de renovación de EPPs - versión sin pandas
 
-## Qué incluye
-- Portal del trabajador para consultar por DNI.
-- Panel de administrador con acceso privado.
-- Carga de archivos Excel `.xlsx`, `.xlsm` y `.xls`.
-- Detección automática de encabezado, incluso si el archivo tiene filas vacías o títulos arriba.
-- Estado visual automático: `VIGENTE`, `POR VENCER` o `VENCIDO`.
-- Exportación del reporte actual a Excel.
-- Logo integrado de Transportes Libertad.
+Esta versión elimina `pandas` para evitar errores de despliegue en Render.
 
-## Campos esperados
-- NRO. DNI
-- NOMBRE AUXILIAR
-- DESCRIPCION
-- CANTIDAD
-- FECHA DE MOVIMIENTO
-- FECHA DE RENOVACION
-- ESTADO
+## Ejecutar localmente
 
-## Instalación
 ```bash
-pip install -r requirements.txt
-python seed_from_excel.py
-python app.py
+py -3.13 -m pip install -r requirements.txt
+py -3.13 seed_from_excel.py
+py -3.13 app.py
 ```
 
-Luego abre:
-```text
-http://127.0.0.1:5000
-```
+## Render
 
-## Credenciales iniciales
+- Build Command: `pip install -r requirements.txt`
+- Start Command: `gunicorn app:app`
+
+## Archivos soportados
+
+- `.xlsx`
+- `.xlsm`
+- `.xls`
+
+## Acceso administrador inicial
+
 - Usuario: `admin`
 - Contraseña: `Admin123*`
-
-## Recomendación importante
-Después del primer ingreso al panel administrador, cambia la contraseña.
-
-## Rutas principales
-- `/` → consulta del trabajador
-- `/admin/login` → acceso del administrador
-- `/admin` → panel administrador
-
-## Cómo publicar en internet
-Puedes subir este proyecto a un servidor Windows o Linux con Python.
-También puedes publicarlo en Render, Railway o un VPS con Nginx.
