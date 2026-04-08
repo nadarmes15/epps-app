@@ -1,27 +1,36 @@
-# Sistema web de consulta de renovación de EPPs - versión sin pandas
+# Sistema web de consulta de renovación de EPPs
 
-Esta versión elimina `pandas` para evitar errores de despliegue en Render.
+Versión preparada para Render con persistencia real de datos usando **Render Postgres** o cualquier base PostgreSQL compatible.
 
-## Ejecutar localmente
+## Variables recomendadas en Render
+
+- `SECRET_KEY`: clave privada para Flask
+- `ADMIN_USERNAME`: usuario del administrador
+- `ADMIN_PASSWORD`: contraseña inicial del administrador
+- `DATABASE_URL`: cadena de conexión de Render Postgres
+
+## Build y Start Command
+
+Build Command:
 
 ```bash
-py -3.13 -m pip install -r requirements.txt
-py -3.13 seed_from_excel.py
-py -3.13 app.py
+pip install -r requirements.txt
 ```
 
-## Render
+Start Command:
 
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `gunicorn app:app`
+```bash
+gunicorn app:app
+```
 
-## Archivos soportados
+## Cómo dejar los datos persistentes
 
-- `.xlsx`
-- `.xlsm`
-- `.xls`
+1. Crea una base de datos **PostgreSQL** en Render.
+2. Copia la variable `External Database URL` o `Internal Database URL`.
+3. En tu Web Service, agrega esa URL como variable `DATABASE_URL`.
+4. Redeploy de la aplicación.
+5. Ingresa al panel admin y vuelve a cargar tu Excel.
 
-## Acceso administrador inicial
+## Nota importante
 
-- Usuario: `admin`
-- Contraseña: `Admin123*`
+En Render Free, los archivos locales se borran cuando el servicio se reinicia. Por eso esta versión ya **no depende de guardar el Excel cargado en disco**: lo importa a la base de datos y luego usa la base para las consultas por DNI.

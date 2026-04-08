@@ -1,12 +1,14 @@
-from app import init_db, read_excel_file, replace_records_from_rows, app
-import os
+from pathlib import Path
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-FILE_PATH = os.path.join(BASE_DIR, "sample_data", "RENOVACION ABRIL.xlsm")
+from app import read_excel_file, replace_records_from_rows, init_db
+
+BASE_DIR = Path(__file__).resolve().parent
+SAMPLE_FILE = BASE_DIR / "sample_data" / "RENOVACION ABRIL.xlsm"
 
 if __name__ == "__main__":
     init_db()
-    with app.app_context():
-        rows = read_excel_file(FILE_PATH)
-        replace_records_from_rows(rows, os.path.basename(FILE_PATH))
-    print(f"Base precargada con {len(rows)} registros.")
+    if not SAMPLE_FILE.exists():
+        raise FileNotFoundError(f"No se encontró el archivo de muestra: {SAMPLE_FILE}")
+    rows = read_excel_file(str(SAMPLE_FILE))
+    replace_records_from_rows(rows, SAMPLE_FILE.name)
+    print(f"Carga completada. Registros importados: {len(rows)}")
